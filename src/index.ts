@@ -1,122 +1,142 @@
 import {
+  Keypair,
   Connection,
   PublicKey,
-  Keypair,
+  clusterApiUrl,
   Transaction,
-  sendAndConfirmTransaction,
-  TransactionInstruction,
 } from "@solana/web3.js";
+import {
+  getAssociatedTokenAddress,
+  createTransferInstruction,
+  getAccount,
+} from "@solana/spl-token";
+import { pumpFunBuy, pumpFunSell } from "./pump-fun/swap";
+import { TransactionMode } from "./pump-fun/types";
 
-// const RPC_URL = "https://api.mainnet-beta.solana.com"; // Replace with your RPC URL
-// const connection = new Connection(RPC_URL, "confirmed");
+// Utility to create and store generated wallets
+function generateWallets(count: number): Keypair[] {
+  const wallets: Keypair[] = [];
+  for (let i = 0; i < count; i++) {
+    wallets.push(Keypair.generate());
+  }
+  return wallets;
+}
 
-// // Parent wallet private key (replace with your own)
-// const PARENT_SECRET_KEY = Uint8Array.from([
-//   /* Your secret key array here */
-// ]);
-// const parentWallet = Keypair.fromSecretKey(PARENT_SECRET_KEY);
+function getKeyPairFromPrivateKey(privateKey) {
+  const secretKey = Uint8Array.from(JSON.parse(privateKey));
+  return Keypair.fromSecretKey(secretKey);
+}
 
-// // Number of wallets to generate
-// const NUM_WALLETS = 10;
+async function getTokenBalance(walletPublicKey, mintStr) {
+  try {
+    const connection = new Connection(
+      "https://api.mainnet-beta.solana.com",
+      "confirmed"
+    );
 
-// // Utility function to generate wallets
-// function generateWallets(count: number): Keypair[] {
-//   return Array.from({ length: count }, () => Keypair.generate());
-// }
+    const publicKey = new PublicKey(walletPublicKey);
+    const mint = new PublicKey(mintStr);
 
-// // Example placeholder for token purchase instruction
-// async function createTokenPurchaseInstruction(
-//   parent: Keypair
-// ): Promise<TransactionInstruction> {
-//   // TODO: Replace with actual logic to interact with the token's smart contract
-//   console.log("Creating token purchase instruction...");
-//   return new TransactionInstruction({
-//     keys: [],
-//     programId: new PublicKey("ExampleProgramId"), // Replace with actual program ID
-//     data: Buffer.alloc(0), // Replace with actual data for token purchase
-//   });
-// }
+    const associatedTokenAddress = await getAssociatedTokenAddress(
+      mint,
+      publicKey
+    );
 
-// // Example placeholder for token transfer instruction
-// async function createTokenTransferInstruction(
-//   from: PublicKey,
-//   to: PublicKey
-// ): Promise<TransactionInstruction> {
-//   // TODO: Replace with actual logic to transfer tokens
-//   console.log(
-//     `Creating transfer instruction from ${from.toBase58()} to ${to.toBase58()}`
-//   );
-//   return new TransactionInstruction({
-//     keys: [],
-//     programId: new PublicKey("ExampleProgramId"), // Replace with actual program ID
-//     data: Buffer.alloc(0), // Replace with actual data for transfer
-//   });
-// }
+    const account = await getAccount(connection, associatedTokenAddress);
 
-// // Example placeholder for token sell instruction
-// async function createTokenSellInstruction(
-//   wallet: Keypair
-// ): Promise<TransactionInstruction> {
-//   // TODO: Replace with actual logic to sell tokens
-//   console.log(
-//     `Creating sell instruction for wallet ${wallet.publicKey.toBase58()}`
-//   );
-//   return new TransactionInstruction({
-//     keys: [],
-//     programId: new PublicKey("ExampleProgramId"), // Replace with actual program ID
-//     data: Buffer.alloc(0), // Replace with actual data for token sell
-//   });
-// }
+    return Number(account.amount);
+  } catch (error) {
+    console.error("Error getting token balance:", error);
+    return null;
+  }
+}
 
-// async function main() {
-//   try {
-//     // 1. Generate wallets
-//     const generatedWallets = generateWallets(NUM_WALLETS);
-//     console.log(`Generated ${NUM_WALLETS} wallets.`);
+async function main() {
+  const connection = new Connection(clusterApiUrl("mainnet-beta"), "confirmed");
 
-//     // 2. Create token purchase instruction
-//     const purchaseInstruction = await createTokenPurchaseInstruction(
-//       parentWallet
-//     );
+  // Parameters
+  const parentWalletPrivateKey = "<YOUR_PARENT_WALLET_PRIVATE_KEY_HERE>"; // Replace with your parent wallet private key
+  const mintStr = "<TOKEN_MINT_ADDRESS_HERE>"; // Replace with your token's mint address
+  const totalSolToSpend = 1; // Total SOL to spend buying tokens
+  const priorityFeeInSol = 0.001; // Optional fee for priority transaction
+  const slippageDecimal = 0.25; // Slippage
 
-//     // 3. Create transfer instructions for each wallet
-//     const transferInstructions = await Promise.all(
-//       generatedWallets.map(async (wallet) =>
-//         createTokenTransferInstruction(parentWallet.publicKey, wallet.publicKey)
-//       )
-//     );
+  // Generate 10 wallets
+  const wallets = generateWallets(10);
+  console.log(
+    "Generated wallets:",
+    wallets.map((w) => w.publicKey.toBase58())
+  );
 
-//     // 4. Bundle all instructions into a single transaction
-//     const transaction = new Transaction().add(
-//       purchaseInstruction,
-//       ...transferInstructions
-//     );
-//     await sendAndConfirmTransaction(connection, transaction, [parentWallet]);
+  // Calculate SOL amount per wallet
+  const solPerWallet = totalSolToSpend / wallets.length;
 
-//     console.log("Tokens purchased and distributed to wallets.");
+  try {
+    // Buy tokens using the parent wallet
+    console.log("Buying tokens...");
+    await pumpFunBuy(
+      TransactionMode.Execution, // Transaction mode
+      parentWalletPrivateKey,
+      mintStr,
+      totalSolToSpend,
+      priorityFeeInSol,
+      slippageDecimal
+    );
 
-//     // 5. Sell tokens from each wallet
-//     for (const wallet of generatedWallets) {
-//       try {
-//         const sellInstruction = await createTokenSellInstruction(wallet);
-//         const sellTransaction = new Transaction().add(sellInstruction);
-//         await sendAndConfirmTransaction(connection, sellTransaction, [wallet]);
-//         console.log(`Tokens sold for wallet: ${wallet.publicKey.toBase58()}`);
-//       } catch (error) {
-//         console.error(
-//           `Failed to sell tokens for wallet: ${wallet.publicKey.toBase58()}`,
-//           error
-//         );
-//         // Retry logic can be implemented here
-//       }
-//     }
+    // Distribute tokens equally among wallets in a single transaction
+    console.log("Distributing tokens...");
+    const parentWalletPublicKey = new PublicKey(
+      getKeyPairFromPrivateKey(parentWalletPrivateKey).publicKey
+    );
+    const tx = new Transaction();
 
-//     console.log("All tokens sold back to SOL.");
-//   } catch (error) {
-//     console.error("An error occurred:", error);
-//   }
-// }
+    for (const wallet of wallets) {
+      const tokenAccount = await getAssociatedTokenAddress(
+        new PublicKey(mintStr),
+        wallet.publicKey
+      );
+      const amountToSend = totalSolToSpend / wallets.length;
+      tx.add(
+        createTransferInstruction(
+          parentWalletPublicKey,
+          tokenAccount,
+          parentWalletPublicKey,
+          amountToSend
+        )
+      );
+    }
 
-// main();
+    const signature = await connection.sendTransaction(tx, [
+      getKeyPairFromPrivateKey(parentWalletPrivateKey),
+    ]);
+    console.log("Token distribution transaction confirmed:", signature);
 
-console.log("All tokens sold back to SOL");
+    // Sell tokens from each wallet
+    console.log("Selling tokens from wallets...");
+    for (const wallet of wallets) {
+      try {
+        const tokenBalance = await getTokenBalance(wallet.publicKey, mintStr);
+        if (tokenBalance) {
+          await pumpFunSell(
+            TransactionMode.Execution, // Transaction mode
+            wallet.secretKey.toString(),
+            mintStr,
+            tokenBalance,
+            priorityFeeInSol,
+            slippageDecimal
+          );
+        }
+        console.log(`Tokens sold for wallet: ${wallet.publicKey.toBase58()}`);
+      } catch (error) {
+        console.error(
+          `Failed to sell tokens for wallet ${wallet.publicKey.toBase58()}:`,
+          error
+        );
+      }
+    }
+  } catch (error) {
+    console.error("Error during token operations:", error);
+  }
+}
+
+main();
